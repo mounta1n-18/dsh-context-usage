@@ -590,12 +590,20 @@ window.__ModuleLoader__.load({
         pace.length === 0 ? null : h('div', { key: 'pace', style: S.pace }, pace.join(' · ')),
       ])
 
-      // 新会话还没有任何请求样本：不要渲染 0 值网格和图例，给一个干净的占位。
+      // 新会话还没有任何请求样本：一行紧凑占位，不渲染零值网格/统计/图例。
       if (capacity === undefined) {
         return [
-          h('div', { key: 'main', ref: innerRef, style: S.stack }, [
-            overview,
-            h('div', { key: 'empty', style: S.muted }, t('noSample')),
+          h('div', {
+            key: 'main',
+            ref: innerRef,
+            style: {
+              display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0,
+            },
+          }, [
+            h(Ring, { key: 'ring', percent: undefined }),
+            h('span', { key: 'title', style: S.title }, t('title')),
+            h('span', { key: 'figure', style: S.figure }, '— / —'),
+            h('span', { key: 'hint', style: S.muted }, t('noSample')),
           ]),
         ]
       }
