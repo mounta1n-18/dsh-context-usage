@@ -175,7 +175,7 @@ window.__ModuleLoader__.load({
        * legend the moment a side pane narrowed the chat column.
        */
       main: {
-        display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-evenly',
+        display: 'flex', flexWrap: 'nowrap', alignItems: 'center', justifyContent: 'space-evenly',
       },
       /**
        * The overview stack — title, figures, pace — centered on one axis, so the
@@ -192,7 +192,7 @@ window.__ModuleLoader__.load({
        * width its own stats need.
        */
       viz: {
-        flex: '0 1 30em', display: 'flex', flexDirection: 'column', gap: 8,
+        flex: '0 1 30em', display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0,
       },
       /** The same area once it holds a band of its own. */
       vizFull: { display: 'flex', flexDirection: 'column', gap: 8, width: '100%' },
@@ -480,7 +480,7 @@ window.__ModuleLoader__.load({
           h('span', { key: 'label', style: S.legendLabel }, props.label),
         ]),
         h('span', { key: 'value', style: S.legendValue }, props.value),
-        props.percent === undefined ? null : h('span', { key: 'percent', style: S.legendPercent }, `(${percentText(props.percent)})`),
+        h('span', { key: 'percent', style: S.legendPercent }, props.percent === undefined ? '' : `(${percentText(props.percent)})`),
       ])
     }
 
@@ -589,6 +589,17 @@ window.__ModuleLoader__.load({
         ]),
         pace.length === 0 ? null : h('div', { key: 'pace', style: S.pace }, pace.join(' · ')),
       ])
+
+      // 新会话还没有任何请求样本：不要渲染 0 值网格和图例，给一个干净的占位。
+      if (capacity === undefined) {
+        return [
+          h('div', { key: 'main', ref: innerRef, style: S.stack }, [
+            overview,
+            h('div', { key: 'empty', style: S.muted }, t('noSample')),
+          ]),
+        ]
+      }
+
       const viz = h('div', { key: 'viz', style: layout === 'wide' ? S.viz : S.vizFull }, [
         h('div', { key: 'grid', style: S.grid }, gridCells(usedPercent, breakdown, total)),
         stats.length === 0 ? null : h('div', { key: 'stats', style: S.stats }, stats),
