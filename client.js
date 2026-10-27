@@ -234,13 +234,16 @@ window.__ModuleLoader__.load({
     /**
      * Body widths, in CSS pixels, at which the arrangement changes.
      *
-     * `WIDE_MIN` is what the one-band arrangement wants for its even gaps without
-     * shrinking the occupancy area below its preferred `30em`; below it the
-     * overview pairs with the legend and the occupancy area takes a band of its
-     * own, and below `MEDIUM_MIN` — where even that pair no longer fits — all
-     * three stack.
+     * `WIDE_MIN` is what the one-band arrangement needs before it starts
+     * squeezing the occupancy area; it must stay below the narrowest body the
+     * host actually gives the panel. The shipped shell pins
+     * `--dsh-chat-content-width` at `clamp(680px, …)` and the panel body is
+     * that width minus the composer insets (~687px at 150% scaling), so the
+     * old 720 threshold could never be reached and every window fell into the
+     * stacked `medium` arrangement. 660 leaves room for the pair layout while
+     * staying under that floor.
      */
-    const WIDE_MIN = 720
+    const WIDE_MIN = 660
     const MEDIUM_MIN = 440
 
     /**
