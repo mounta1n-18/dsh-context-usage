@@ -1,8 +1,8 @@
 # dsh-context-usage — 软安装包
 
-一个 DeepSeek Harness **Web 插件包**：`/context` 斜杠命令、作曲器控件行的占用按钮与账户余额药丸、以及作曲器上方的上下文用量面板（含轮数/步数/输出速度）。
+一个 DeepSeek Harness **Web 插件包**：`/context` 斜杠命令、作曲器控件行的占用按钮与账户余额药丸、以及嵌在作曲器卡片里的上下文用量面板（含轮数/步数/输出速度）。
 
-**零依赖、无构建**：Host 半是空壳（`index.js`），全部逻辑在 `client.js`（手写纯 JavaScript，只 `require('react')`，样式只用宿主主题 token）。整包自包含，不含 `src/`、不需要 `pnpm install`、不需要 `pnpm run build`。
+**零依赖、无构建**：Host 半（`index.js`）只注册一个 session 投影，界面全在 `client.js`（手写纯 JavaScript，只 `require('react')`，样式只用宿主主题 token）。整包自包含，不含 `src/`、不需要 `pnpm install`、不需要 `pnpm run build`。
 
 ---
 
@@ -40,7 +40,9 @@ plugin_manager { "action": "install_bundle", "target": "<tgz 的绝对路径>" }
 ## 2. 验证安装成功
 
 - 结构校验（无需审批）：`cordis_inspect_query` → `client` / `Slots` / `listSubTree`，`root` = `conversation.input.dock`，应看到 `id: context-usage` 且 `active: true`
-- 行为校验（需要你在界面上看）：敲 `/context`，或点作曲器右下（模型选择器与发送键之间）的 `◔ xx%` 按钮 → 作曲器上方出现用量面板
+- 行为校验（需要你在界面上看）：敲 /context，或点作曲器右下（模型选择器与发送键之间）的 ◔ xx% 按钮 → 作曲器卡片内、输入框与权限栏之间出现用量条
+- **改过 index.js 后**：在插件管理里 disable → enable（宿主会重新 `import()`，已实测，不必重启 DSH），再 `Ctrl+R` 刷新页面。面板应出现 4 段图例（系统提示词 / 工具定义 / 工具结果 / 对话消息，对话消息由用户消息、助手回复、压缩摘要合并而来）；若只看到 3 类（系统提示词 / 工具定义 / 对话消息）且数字明显偏高，说明 Host 半没重载，走的是兼容回退
+- 持久化校验：开着面板的会话关掉 DSH 再打开，面板仍是开着的（状态在 `~/.local/state/dsh-context-usage/panels.json`，经 `/__context-usage/panels` 读写）
 
 ## 3. 卸载
 
@@ -60,7 +62,8 @@ plugin_manager { "action": "install_bundle", "target": "<tgz 的绝对路径>" }
 - 只在 **Web / 桌面 GUI** 里有命令面（纯客户端命令）；headless / CLI 没有该命令
 - 余额药丸里的 `CLIENT_VERSION` 硬编码为 `0.2.0-rc.2`（客户端插件在运行时读不到 shell 版本）。DSH 升级后若平台拒收，药丸会显示 `余额 接口异常·<code>`，改这一处常量即可
 - 上下文容量取自 `contextPressure.contextWindow`（provider 每次请求上报），**换模型自动跟随**，包内没有硬编码容量
-- 构成三行是 4 字符/token 启发式估算；"本会话累计"四格是 provider 上报的计费口径，两者不同源
+- 构成是 4 字符/token 启发式估算，再按 contextPressure 的实测占用等比校正（系统提示词与工具定义不缩放），所以四段之和恒等于实测占用；「本会话累计」四格是 provider 上报的计费口径，两者不同源
+- 没有 	urn/start 基线的会话（fork、或日志从中途开始）不显示「本轮」增量，宁缺毋滥
 
 ## 5. 两处需要知道的行为
 
@@ -75,7 +78,7 @@ plugin_manager { "action": "install_bundle", "target": "<tgz 的绝对路径>" }
 [class$="_dock"]:has([data-context-usage="composer-dock-anchor"]) { display: none !important }
 ```
 
-被隐藏的信息**全部有去处**：占用率 → 面板与作曲器按钮；未命中/命中/命中率/输出 → 面板中间栏；轮数/步数/输出速度 → 面板总览的第三行；余额 → 移到作曲器控件行（占用按钮右侧）。
+被隐藏的信息**全部有去处**：占用率 → 面板与作曲器按钮；未命中/命中/命中率/输出 → 面板中间栏；轮数/步数/输出速度 → 面板图例行右端；余额 → 移到作曲器控件行（占用按钮右侧）。
 
 - 只可能命中本包锚点所在的那个 dock，不会波及其他面板
 - 依赖 `_dock` 这个 CSS Module 命名后缀，**DSH 大版本升级后需要复核一次**
@@ -90,9 +93,13 @@ plugin_manager { "action": "install_bundle", "target": "<tgz 的绝对路径>" }
 |---|---|
 | `package.json` | 包清单：`dsh.bundle.patch`（Host 行）+ `dsh.client`（浏览器半）+ `icon` + `locale` |
 | `cordis.patch.yml` | 一行 insert，把本包挂进 profile 条目树 |
-| `index.js` | Host 半：空壳（不注册任何东西） |
+| `index.js` | Host 半：注册 `contextUsage` 投影（六类计价 + 本轮增量 + 压缩声明结算）+ `/__context-usage/panels` 面板状态路由 |
 | `client.js` | Client 半：`/context` 命令、占用按钮、用量面板、余额药丸 |
+| `scripts/check-projection.mjs` | 无头自测：投影折叠 / 压缩声明 / 引用稳定 |
+| `scripts/check-client.mjs` | 无头自测：面板取值、缩放、图例（可喂真实会话日志） |
+| `scripts/replay-session.mjs` | 把真实会话日志回放进投影，对比 provider 实测 prompt |
 | `locale/zh.json`、`locale/en.json` | 插件页展示的标题与描述 |
 | `icon.svg` | 插件页图标（三段圆环） |
 | `scripts/pack.ps1` | 打包成可独立安装的 tarball |
 | `INSTALL.md` | 本文件 |
+
