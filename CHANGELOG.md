@@ -1,5 +1,18 @@
 # 变更记录
 
+## 1.1.5 — 2026-11-18
+
+- 深色模式下图例图标改用 400 档亮色（`--cu-*-mark`），不再沿用条形那套 700 档深色——深色卡片上原来的图标几乎看不见。条形本身仍是深色，只在图标这一层分主题取色。
+- 真·每秒刷新：路由缓存从 10 秒收到 1 秒（之前浏览器虽然每秒问，但拿到的是十秒内的旧值，看起来就像没刷新）。
+- 修掉余额双符号：`formatBalance` 已带 `¥`，外层不再重复拼接。
+
+## 1.1.4 — 2026-11-18
+
+- 余额药丸改为按**当前会话所选模型所属平台**查询：从 `modelSelection` 投影读 `{provider, model}`，模型或会话一换就立刻换查询对象，不再固定显示 DeepSeek 账户余额。
+- 新增 `balance.js` 与宿主路由 `GET /__context-usage/balance`：DeepSeek 走账户授权（`deepseekAccount`，无需 API key），Moonshot / 智谱走各自的余额接口（`MOONSHOT_API_KEY` / `ZHIPU_API_KEY`，读环境变量或 `.credentials.yaml` 的 `refs:` 段）；OpenAI / Anthropic / Gemini / xAI / DashScope / 火山 / 混元没有公开余额接口，如实返回 `unsupported` 并在悬停里说明原因。
+- 刷新从 10 秒改成 1 秒，路由侧缓存同步收到 1 秒（每秒一次真实上游查询，并发合并），全程不调用模型、不花 token。
+- 宿主侧用 `ctx.reflect.get('deepseekAccount')` 读取账户服务，不声明 inject 边，所以没有账户服务的宿主也不会因此报错，只是 DeepSeek 那一支返回「账户服务不可用」。
+
 ## 1.1.3 — 2026-11-14
 
 - 面板开合状态跨重启保留：Web GUI 每次启动换端口，`localStorage` 绑在 origin 上会丢，所以改成宿主侧记账——`GET/POST /__context-usage/panels` 读写 `~/.local/state/dsh-context-usage/panels.json`（按 sessionId 记，去抖 400ms，最多 200 条）。请求失败只是「本次刷新内记得」，不影响面板本身。

@@ -24,7 +24,7 @@ DSH 原生的上下文信息散落在作曲器下方那条底栏里：一个圆�
   - **占用条**：单行连续堆叠带，四段——系统提示词（紫）/ 工具定义（蓝）/ 工具结果（青）/ 对话消息（绿，含用户消息、助手回复与压缩摘要）。纯色填充，命中「冷色家族」的一段接一段，条内加 1px 高斯模糊柔化接缝。本轮新增不再单独占一段，只在总览行给一个 `本轮 +X (占比)` 的文字
   - **图例行**：四段 chips（各自配一枚同色线稿图标，非零才出现）+ 剩余空间 + `轮数 · 步数 · tok/s`
 
-- **余额药丸** —— 作曲器右侧显示账户余额，前台每 10 秒刷新，悬停显示取样时间；未登录/无钱包/接口异常都有明确状态
+- **余额药丸** —— 作曲器右侧显示**当前会话所选模型所属平台**的余额（DeepSeek / Moonshot / 智谱可直接查，其余平台如实提示查不到），前台每秒刷新、切模型立刻切换，悬停显示取样时间与来源；未登录/无钱包/无 key/接口异常都有明确状态
 - **零依赖、无构建** —— 手写纯 JavaScript，只 `require('react')`，样式只用宿主主题 token。没有 `src/`、没有 `pnpm install`、没有 `pnpm run build`
 
 ## 安装
@@ -85,7 +85,13 @@ plugin_manager { "action": "install_bundle", "target": "<tgz 的绝对路径>" }
 | 本轮新增 | 同一投影的 `turn` 增量 | 相对上一次 `turn/start` 的差值 |
 | 未命中 / 命中 / 命中率 / 输出 | `tokenUsage` | provider 上报的**计费**口径（本会话累计） |
 | 轮数 / 步数 / 输出速度 | `sessionStats` | 宿主统计 |
-| 余额 | `ctx.remote.account.getBalance` | 宿主直连 Platform，**宿主侧无缓存** |
+| 余额 | 本插件的 `/__context-usage/balance` 路由 | 按**当前会话所选模型**所属平台查询，见下 |
+
+余额为什么跟着模型走：
+
+1. 药丸从 `modelSelection` 投影读当前会话的 `{provider, model}`，切换模型/切换会话时立刻换一个查询对象，不等下一次轮询。
+2. 浏览器每秒问一次本地路由，路由侧缓存 1 秒 —— 也就是每秒真去平台问一次，**全程不调用模型、不花 token**。
+3. 各平台走自己的口子：DeepSeek 用宿主已有的账户授权（`deepseekAccount`），Moonshot / 智谱用 `MOONSHOT_API_KEY` / `ZHIPU_API_KEY`（环境变量或 `~/.dsh/.credentials.yaml` 的 `refs:` 段）。OpenAI、Anthropic、Gemini、xAI、DashScope、火山、混元**没有「一把 API key 换余额」的公开接口**，药丸显示 `—`，悬停给出具体原因，不会拿别的账户余额冒充。
 
 构成是怎么算的、为什么可信：
 
@@ -113,7 +119,8 @@ plugin_manager { "action": "install_bundle", "target": "<tgz 的绝对路径>" }
 ```
 package.json        # 包清单：dsh.bundle.patch（Host 行）+ dsh.client（浏览器半）+ icon + locale
 cordis.patch.yml    # 一行 insert，把本包挂进 profile 条目树
-index.js            # Host 半：注册 contextUsage 投影（六类计价 + 本轮增量）+ 面板状态的小路由
+index.js            # Host 半：注册 contextUsage 投影（六类计价 + 本轮增量）+ 面板状态与余额两条小路由
+balance.js          # 余额查询：按 provider 归户，走账户授权或各平台余额接口，1 秒缓存
 client.js           # Client 半：全部 UI（单行占用条、图例、切换按钮、余额药丸）
 locale/zh.json      # 插件页展示的标题与描述
 locale/en.json

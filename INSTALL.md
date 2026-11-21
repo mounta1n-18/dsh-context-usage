@@ -2,7 +2,7 @@
 
 一个 DeepSeek Harness **Web 插件包**：`/context` 斜杠命令、作曲器控件行的占用按钮与账户余额药丸、以及嵌在作曲器卡片里的上下文用量面板（含轮数/步数/输出速度）。
 
-**零依赖、无构建**：Host 半（`index.js`）只注册一个 session 投影，界面全在 `client.js`（手写纯 JavaScript，只 `require('react')`，样式只用宿主主题 token）。整包自包含，不含 `src/`、不需要 `pnpm install`、不需要 `pnpm run build`。
+**零依赖、无构建**：Host 半（`index.js` + `balance.js`）只注册一个 session 投影和两条本地路由，界面全在 `client.js`（手写纯 JavaScript，只 `require('react')`，样式只用宿主主题 token）。整包自包含，不含 `src/`、不需要 `pnpm install`、不需要 `pnpm run build`。
 
 ---
 
@@ -85,7 +85,7 @@ plugin_manager { "action": "install_bundle", "target": "<tgz 的绝对路径>" }
 - 想恢复官方底栏：把 `client.js` 里的 `HIDE_SHIPPED_DOCK` 改成 `false` 即可
 
 **余额刷新**
-`ctx.remote.account.getBalance` 是宿主直连 Platform 的 HTTP 请求（已核实 `getDetail → requestAccount`，**宿主侧无缓存**），前台可见时每 10 秒一次，前台不可见时零请求。鼠标悬停在余额上会显示**取样时间**（`DeepSeek 余额 · HH:MM:SS`）——用它可以分辨"轮询没跑"和"平台返回的就是旧值"。
+浏览器每秒问一次插件自己的 `/__context-usage/balance` 路由，宿主每 1 秒真去平台问一次（缓存 1 秒、并发合并；前台不可见时零请求），全程不调用模型、不花 token。鼠标悬停在余额上会显示**取样时间**（`DeepSeek · HH:MM:SS`）——用它可以分辨"轮询没跑"和"平台返回的就是旧值"。
 
 ## 6. 文件清单
 
@@ -93,7 +93,8 @@ plugin_manager { "action": "install_bundle", "target": "<tgz 的绝对路径>" }
 |---|---|
 | `package.json` | 包清单：`dsh.bundle.patch`（Host 行）+ `dsh.client`（浏览器半）+ `icon` + `locale` |
 | `cordis.patch.yml` | 一行 insert，把本包挂进 profile 条目树 |
-| `index.js` | Host 半：注册 `contextUsage` 投影（六类计价 + 本轮增量 + 压缩声明结算）+ `/__context-usage/panels` 面板状态路由 |
+| `index.js` | Host 半：注册 `contextUsage` 投影（六类计价 + 本轮增量 + 压缩声明结算）+ `/__context-usage/panels` 面板状态路由 + `/__context-usage/balance` 余额路由 |
+| `balance.js` | 余额查询：按 provider 归户（DeepSeek 账户授权 / Moonshot / 智谱余额接口），1 秒缓存，其余平台如实返回「查不到」 |
 | `client.js` | Client 半：`/context` 命令、占用按钮、用量面板、余额药丸 |
 | `scripts/check-projection.mjs` | 无头自测：投影折叠 / 压缩声明 / 引用稳定 |
 | `scripts/check-client.mjs` | 无头自测：面板取值、缩放、图例（可喂真实会话日志） |

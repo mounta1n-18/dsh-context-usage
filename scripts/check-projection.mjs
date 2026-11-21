@@ -10,14 +10,15 @@
  */
 
 import { apply, definition, name, inject, PANEL_ROUTE } from '../index.js'
+import { BALANCE_ROUTE } from '../balance.js'
 
 /* The plugin wiring, without a Host: `apply` must hand the registry the
  * definition and leave it an effect disposer to release on unload, and it must
- * put the panel-state route on the Web carrier when there is one. */
+ * put the panel-state and balance routes on the Web carrier when there is one. */
 let registered
 let released = false
-let route
-let routeReleased = false
+const routes = new Map()
+const routeReleases = []
 const fakeScope = {
   effect(fn, label) {
     const disposer = fn()
@@ -26,8 +27,9 @@ const fakeScope = {
   },
   webServer: {
     register(value) {
-      route = value
-      return () => { routeReleased = true }
+      routes.set(value.path, value)
+      const release = () => { routeReleases.push(value.path) }
+      return release
     },
   },
   logger: { warn: (message) => console.error(message) },
@@ -57,7 +59,9 @@ apply(fakeCtx)
 if (registered !== definition) throw new Error('apply did not register the definition')
 if (registered.key !== 'contextUsage' || registered.stateVersion !== 2) throw new Error('unexpected projection identity')
 if (registered.wire.summary !== false) throw new Error('the unit must stay out of compaction prompts')
-if (!route || route.kind !== 'exact' || route.path !== PANEL_ROUTE) throw new Error('apply did not register the panel route')
+const panelRoute = routes.get(PANEL_ROUTE)
+if (!panelRoute || panelRoute.kind !== 'exact') throw new Error('apply did not register the panel route')
+if (!routes.has(BALANCE_ROUTE)) throw new Error('apply did not register the balance route')
 await fakeCtx.lastDisposer()
 if (!released) throw new Error('the effect disposer never released the registration')
 console.log('wiring: registered + releasable')
@@ -86,7 +90,7 @@ console.log('wiring: registered + releasable')
       writeHead(status, headers) { this.status = status; Object.assign(this.headers, headers ?? {}) },
       end(text) { if (text !== undefined) this.body = String(text) },
     }
-    await route.handler(req, res)
+    await panelRoute.handler(req, res)
     return res
   }
   const empty = await answer('GET')
@@ -102,6 +106,42 @@ console.log('wiring: registered + releasable')
   delete process.env.DSH_CONTEXT_USAGE_PANELS
   rmSync(scratch, { force: true })
   console.log('route: GET/POST round trip ok')
+}
+
+/* The balance route maps a provider to its own account and answers with the
+ * pill's payload. DeepSeek goes through the account service, the others through
+ * a documented endpoint or an explicit "cannot be read" status. */
+{
+  const balanceRoute = routes.get(BALANCE_ROUTE)
+  fakeScope.deepseekAccount = {
+    async getBalance(meta) {
+      if (meta.locale !== 'zh') throw new Error('client metadata was not forwarded')
+      return { status: 'ready', value: [{ currency: 'CNY', balance: 12.34 }] }
+    },
+  }
+  const ask = async (search) => {
+    const req = { method: 'GET', url: `${BALANCE_ROUTE}${search}` }
+    const res = {
+      status: 0,
+      headers: {},
+      body: '',
+      setHeader(name, value) { this.headers[name] = value },
+      writeHead(status, headers) { this.status = status; Object.assign(this.headers, headers ?? {}) },
+      end(text) { if (text !== undefined) this.body = String(text) },
+    }
+    await balanceRoute.handler(req, res)
+    return { status: res.status, body: JSON.parse(res.body) }
+  }
+  const deepseek = await ask('?provider=deepseek&locale=zh&tz=28800')
+  if (deepseek.body.status !== 'ready' || deepseek.body.amount !== 12.34) {
+    throw new Error(`deepseek balance was not probed: ${JSON.stringify(deepseek.body)}`)
+  }
+  const unsupported = await ask('?provider=openai')
+  if (unsupported.body.status !== 'unsupported') throw new Error('openai must answer unsupported')
+  const unknown = await ask('?provider=whatever')
+  if (unknown.body.status !== 'unsupported') throw new Error('an unknown provider must answer unsupported')
+  delete fakeScope.deepseekAccount
+  console.log('route: balance probe ok')
 }
 
 let seq = 0

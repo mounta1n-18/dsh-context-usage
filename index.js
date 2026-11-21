@@ -24,6 +24,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { BALANCE_ROUTE, createBalanceHandler } from './balance.js'
 
 /** Cordis plugin identity. */
 export const name = 'dsh-context-usage'
@@ -655,6 +656,23 @@ export function apply(ctx) {
         return () => {}
       }
     }, 'context-usage: panel state route')
+    scope.effect(() => {
+      try {
+        /* Balance probing reads provider keys (Moonshot, Zhipu) or the platform
+         * account grant (DeepSeek) on the Host, so the browser never holds a
+         * secret and a 1s poll costs no tokens. */
+        const handler = createBalanceHandler(scope)
+        return scope.webServer.register({ kind: 'exact', path: BALANCE_ROUTE, handler })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        try {
+          scope.logger.warn(`[dsh-context-usage] balance route registration failed: ${message}`)
+        } catch {
+          /* logging must never break the plugin */
+        }
+        return () => {}
+      }
+    }, 'context-usage: balance route')
     scope.effect(() => () => {
       if (panelTimer !== null) {
         clearTimeout(panelTimer)

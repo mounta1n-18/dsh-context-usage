@@ -34,7 +34,11 @@ window.__ModuleLoader__.load({
 
     const NS = 'context-usage'
     const CLIENT_VERSION = '0.2.0-rc.2'
-    const BALANCE_REFRESH_MS = 10000
+    /* The Host caches each provider's answer for 10s, so a 1s poll costs one
+     * request per provider per 10s; a switch of the Session's model re-reads
+     * immediately because the effect depends on the provider. */
+    const BALANCE_REFRESH_MS = 1000
+    const BALANCE_ROUTE = '/__context-usage/balance'
     const HIDE_SHIPPED_DOCK = true
     const DOCK_MARKER = 'composer-dock-anchor'
     const DOCK_STYLE_ID = '@local/dsh-context-usage/dock-override.css'
@@ -77,6 +81,11 @@ window.__ModuleLoader__.load({
   --cu-tools: #2563eb;
   --cu-tool: #0891b2;
   --cu-messages: #059669;
+  --cu-system-mark: #7c3aed;
+  --cu-tools-mark: #2563eb;
+  --cu-tool-mark: #0891b2;
+  --cu-messages-mark: #059669;
+  --cu-free-mark: #8a919e;
   --cu-track: rgba(0, 0, 0, 0.07);
   --cu-turn: #047857;
   --cu-ring: #4d8df5;
@@ -86,6 +95,13 @@ body[data-ds-dark-theme] {
   --cu-tools: #1d4ed8;
   --cu-tool: #0e7490;
   --cu-messages: #047857;
+  /* The bar keeps its deep fills; the legend marks are strokes, so they need
+   * the 400-level hue to stay legible on the dark card. */
+  --cu-system-mark: #a78bfa;
+  --cu-tools-mark: #60a5fa;
+  --cu-tool-mark: #22d3ee;
+  --cu-messages-mark: #34d399;
+  --cu-free-mark: #c3c9d4;
   --cu-track: rgba(255, 255, 255, 0.10);
   --cu-turn: #6ee7b7;
   --cu-ring: #7fb2ff;
@@ -839,7 +855,7 @@ body[data-ds-dark-theme] {
           key: bucket.key,
           kind: bucket.key,
           label: t(bucket.label),
-          color: `var(--cu-${bucket.key})`,
+          color: `var(--cu-${bucket.key}-mark)`,
           value: formatTokens(bucket.value),
           title: `${t(bucket.label)} ${formatTokens(bucket.value)}${bucket.sources.length > 1 ? ` (${bucket.sources.map((key) => t(key)).join(' + ')})` : ''} · ${t('estimated')} ${formatTokens(bucket.raw)}`,
         }))
@@ -847,7 +863,7 @@ body[data-ds-dark-theme] {
         key: 'free',
         kind: 'free',
         label: t('free'),
-        color: 'rgba(127, 127, 127, 0.55)',
+        color: 'var(--cu-free-mark)',
         value: formatTokens(model.free),
         title: `${t('free')} ${formatTokens(model.free)} · ${percentText(share(model.free, model.capacity))}`,
       }))
@@ -1124,53 +1140,144 @@ body[data-ds-dark-theme] {
          * loop against the account API.
          */
         ctx.inject(['remote', 'remote.account'], (scope) => {
-          function BalancePill() {
+          /**
+           * One line of the pill: a currency symbol plus the amount, or a dash
+           * with the reason in the tooltip. The Host owns the upstream call.
+           */
+          function balanceText(state) {
+            if (state.kind === 'ready') {
+              const symbol = state.currency === 'CNY' ? '¥' : '$'
+              return formatBalance(state.amount, symbol)
+            }
+            if (state.kind === 'signedOut') return tr('balanceSignedOut')
+            if (state.kind === 'empty') return tr('balanceEmpty')
+            if (state.kind === 'noKey' || state.kind === 'unsupported') return '—'
+            if (state.kind === 'pending') return '—'
+            return tr('balanceFailed')
+          }
+
+          function balanceTooltip(state) {
+            const name = state.name || tr('balanceTitle')
+            if (state.kind === 'ready') {
+              const at = new Date(state.at || Date.now())
+              return `${name} ${balanceText(state)} · ${at.toLocaleTimeString()}`
+            }
+            return `${name} · ${state.detail || tr('balanceTitle')}`
+          }
+
+          function BalancePill(props) {
+            const read = projectionReader(props)
+            const selection = read('modelSelection')
+            const chosen = selection !== undefined && selection !== null && selection.next !== undefined
+              ? selection.next
+              : undefined
+            const provider = chosen !== undefined && chosen !== null && typeof chosen.provider === 'string' && chosen.provider.length > 0
+              ? chosen.provider
+              : 'deepseek'
+            const model = chosen !== undefined && chosen !== null && typeof chosen.model === 'string' ? chosen.model : ''
             const [state, setState] = useState({ kind: 'pending' })
+
             useEffect(() => {
               let active = true
               const settle = (next) => {
                 if (active) setState(next)
               }
-              const read = async () => {
+
+              /* Fallback for compositions without the Web route: the account
+               * Remote still answers for DeepSeek itself. */
+              const readAccount = async () => {
+                const result = await scope.remote.account.getBalance({
+                  version: CLIENT_VERSION,
+                  locale: ctx.locale.getSnapshot().active,
+                  timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
+                })
+                if (result === undefined || result === null || result.ok !== true) {
+                  settle({ kind: 'error', detail: result && result.error ? String(result.error.code) : 'transport' })
+                  return
+                }
+                const balance = result.value
+                if (balance === null || balance === undefined) {
+                  settle({ kind: 'signedOut' })
+                  return
+                }
+                if (balance.status !== 'ready') {
+                  settle({ kind: 'failed', detail: typeof balance.reason === 'string' ? balance.reason : '' })
+                  return
+                }
+                const normal = balance.value || []
+                const bonus = balance.bonusWallets || []
+                const wallet = normal.find((entry) => entry.currency === 'CNY')
+                  || normal[0]
+                  || bonus.find((entry) => entry.currency === 'CNY')
+                  || bonus[0]
+                if (wallet === undefined) {
+                  settle({ kind: 'empty' })
+                  return
+                }
+                settle({
+                  kind: 'ready',
+                  amount: wallet.balance,
+                  currency: wallet.currency,
+                  name: 'DeepSeek',
+                  at: Date.now(),
+                })
+              }
+
+              const readBalance = async () => {
+                const params = new URLSearchParams({
+                  provider,
+                  version: CLIENT_VERSION,
+                  locale: ctx.locale.getSnapshot().active,
+                  tz: String(-new Date().getTimezoneOffset() * 60),
+                })
+                if (model.length > 0) params.set('model', model)
                 try {
-                  const result = await scope.remote.account.getBalance({
-                    version: CLIENT_VERSION,
-                    locale: ctx.locale.getSnapshot().active,
-                    timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
+                  const response = await fetch(`${BALANCE_ROUTE}?${params.toString()}`, {
+                    headers: { accept: 'application/json' },
                   })
+                  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+                  const body = await response.json()
                   if (!active) return
-                  if (result === undefined || result === null || result.ok !== true) {
-                    settle({ kind: 'error', detail: result && result.error ? String(result.error.code) : 'transport' })
+                  if (body === null || typeof body !== 'object') {
+                    settle({ kind: 'error', detail: 'empty body' })
                     return
                   }
-                  const balance = result.value
-                  if (balance === null || balance === undefined) {
-                    settle({ kind: 'signedOut' })
-                    return
-                  }
-                  if (balance.status !== 'ready') {
-                    settle({ kind: 'failed', detail: typeof balance.reason === 'string' ? balance.reason : '' })
-                    return
-                  }
-                  const normal = balance.value || []
-                  const bonus = balance.bonusWallets || []
-                  const preferred = normal.find((entry) => entry.currency === 'CNY')
-                    || normal[0]
-                    || bonus.find((entry) => entry.currency === 'CNY')
-                    || bonus[0]
-                  if (preferred === undefined) {
-                    settle({ kind: 'empty' })
-                    return
-                  }
-                  settle({ kind: 'ready', wallet: preferred, at: Date.now() })
+                  const kind = body.status === 'ready' ? 'ready'
+                    : body.status === 'no-key' ? 'noKey'
+                      : body.status === 'unsupported' ? 'unsupported'
+                        : body.status === 'signed-out' ? 'signedOut'
+                          : body.status === 'empty' ? 'empty' : 'failed'
+                  settle({
+                    kind,
+                    amount: typeof body.amount === 'number' ? body.amount : undefined,
+                    currency: typeof body.currency === 'string' ? body.currency : 'CNY',
+                    name: typeof body.name === 'string' ? body.name : undefined,
+                    detail: typeof body.detail === 'string' ? body.detail : '',
+                    at: typeof body.at === 'number' ? body.at : Date.now(),
+                    provider,
+                  })
                 } catch (error) {
-                  settle({ kind: 'error', detail: error && error.message ? String(error.message).slice(0, 60) : 'throw' })
+                  if (!active) return
+                  if (provider === 'deepseek' || provider.startsWith('deepseek')) {
+                    try {
+                      await readAccount()
+                      return
+                    } catch {
+                      /* fall through to the route error */
+                    }
+                  }
+                  settle({
+                    kind: 'error',
+                    detail: error && error.message ? String(error.message).slice(0, 60) : 'throw',
+                    provider,
+                  })
                 }
               }
+
+              readBalance()
               const tick = () => {
-                if (document.visibilityState === 'visible') read()
+                if (document.visibilityState === 'visible') readBalance()
               }
-              read()
               const timer = window.setInterval(tick, BALANCE_REFRESH_MS)
               document.addEventListener('visibilitychange', tick)
               window.addEventListener('focus', tick)
@@ -1180,22 +1287,14 @@ body[data-ds-dark-theme] {
                 document.removeEventListener('visibilitychange', tick)
                 window.removeEventListener('focus', tick)
               }
-            }, [])
+            }, [provider, model])
+
             if (state.kind === 'pending') return null
-            if (state.kind === 'ready') {
-              const at = new Date(state.at)
-              return h('span', {
-                style: S.balance,
-                title: `${tr('balanceTitle')} · ${at.toLocaleTimeString()}`,
-                'data-context-usage': 'balance',
-              }, formatBalance(state.wallet.balance, state.wallet.currency === 'CNY' ? '¥' : '$'))
-            }
-            const key = state.kind === 'signedOut' ? 'balanceSignedOut'
-              : state.kind === 'empty' ? 'balanceEmpty'
-                : state.kind === 'failed' ? 'balanceFailed' : 'balanceError'
             return h('span', {
-              style: S.balance, title: state.detail || tr('balanceTitle'), 'data-context-usage': 'balance',
-            }, state.detail === undefined ? tr(key) : `${tr(key)}·${state.detail}`)
+              style: S.balance,
+              title: balanceTooltip(state),
+              'data-context-usage': 'balance',
+            }, balanceText(state))
           }
 
           /* The dock that used to hold this pill is hidden, so it rides the
